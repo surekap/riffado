@@ -1,0 +1,100 @@
+import type { OpenAI } from "openai";
+import type { TranscriptionDiarized } from "openai/resources/audio/transcriptions";
+import {
+    transcodeSegmentToMp3,
+    transcodeToMp3,
+} from "@/lib/transcription/ffmpeg";
+import { buildTranscriptionParams } from "@/lib/transcription/format";
+
+// OpenAI currently rejects diarization chunks over 1,400 seconds. Leave a
+// margin for container timestamps and provider-side chunk boundary changes.
+const MAX_CHUNK_SECONDS = 20 * 60;
+
+interface DiarizedTranscriptionOptions {
+    client: OpenAI;
+    model: string;
+    audioBuffer: Buffer;
+    durationMs: number;
+    filename: string;
+    language?: string;
+    timeoutMs: number;
+}
+
+/** Normalize and locally chunk audio before calling OpenAI's diarization API. */
+export async function transcribeOpenAIDiarized(
+    options: DiarizedTranscriptionOptions,
+): Promise<{ text: string; detectedLanguage: null }> {
+    const {
+        client,
+        model,
+        audioBuffer,
+        durationMs,
+        filename,
+        language,
+        timeoutMs,
+    } = options;
+    const durationSeconds = durationMs / 1000;
+    const chunkCount = Math.max(
+        1,
+        Math.ceil(durationSeconds / MAX_CHUNK_SECONDS),
+    );
+    const chunkDuration = durationSeconds / chunkCount;
+    const responses: TranscriptionDiarized[] = [];
+
+    for (let index = 0; index < chunkCount; index += 1) {
+        const mp3 =
+            chunkCount === 1
+                ? await transcodeToMp3(audioBuffer)
+                : await transcodeSegmentToMp3(
+                      audioBuffer,
+                      index * chunkDuration,
+                      chunkDuration,
+                  );
+        const file = buildMp3File(mp3, filename, index, chunkCount);
+        const response = await client.audio.transcriptions.create(
+            buildTranscriptionParams({
+                file,
+                model,
+                responseFormat: "diarized_json",
+                language,
+            }),
+            { timeout: timeoutMs },
+        );
+        responses.push(response as TranscriptionDiarized);
+    }
+
+    return {
+        text: formatDiarizedResponses(responses),
+        detectedLanguage: null,
+    };
+}
+
+function buildMp3File(
+    buffer: Buffer,
+    filename: string,
+    index: number,
+    chunkCount: number,
+): File {
+    const stem = filename.replace(/\.[^.]+$/, "");
+    const suffix = chunkCount > 1 ? `-part-${index + 1}` : "";
+    const view = new Uint8Array(
+        buffer.buffer as ArrayBuffer,
+        buffer.byteOffset,
+        buffer.byteLength,
+    );
+    return new File([view], `${stem}${suffix}.mp3`, { type: "audio/mpeg" });
+}
+
+function formatDiarizedResponses(responses: TranscriptionDiarized[]): string {
+    const multipleParts = responses.length > 1;
+    return responses
+        .flatMap((response, index) =>
+            (response.segments ?? []).map((segment) => {
+                const speaker = multipleParts
+                    ? `part_${index + 1}_${segment.speaker}`
+                    : segment.speaker;
+                return `${speaker}: ${segment.text}`;
+            }),
+        )
+        .join("\n");
+}

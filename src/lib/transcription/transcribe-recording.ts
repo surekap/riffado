@@ -37,6 +37,7 @@ import {
 } from "@/lib/transcription/format";
 import { geminiTranscribe } from "@/lib/transcription/gemini-transcribe";
 import { isRiffadoIncludedProviderId } from "@/lib/transcription/included-provider";
+import { transcribeOpenAIDiarized } from "@/lib/transcription/openai-diarized-transcribe";
 import { upsertTranscription } from "@/lib/transcription/persist";
 import { emitEvent } from "@/lib/webhooks/emit";
 
@@ -472,43 +473,57 @@ async function transcribeRecordingInner(
                 } else {
                     const responseFormat = getResponseFormat(model);
 
-                    // OpenAI's /v1/audio/transcriptions endpoint has a hard
-                    // 25 MiB per-request limit. For meeting-length recordings
-                    // that limit is the common case, not the edge case -- fall
-                    // back to a mono Opus re-encode so 3 h+ uploads don't get
-                    // rejected with a 413.
-                    const compressed = await maybeCompressForWhisper(
-                        audioBuffer,
-                        contentType,
-                    );
-                    const fileToSend = compressed.compressed
-                        ? buildAudioFile(
-                              compressed.buffer,
-                              recording.storagePath,
-                              decryptedFilename,
-                          ).file
-                        : audioFile;
-
-                    // Whisper-1 runs ~0.1-0.3x realtime, so a 3 h recording
-                    // can keep the request open 20-40 min. The SDK default
-                    // (10 min) times out long before that; override
-                    // per-request so other OpenAI calls keep the default.
-                    const transcription =
-                        await openai.audio.transcriptions.create(
-                            buildTranscriptionParams({
-                                file: fileToSend,
-                                model,
-                                responseFormat,
-                                language: defaultLanguage,
-                            }),
-                            { timeout: env.WHISPER_REQUEST_TIMEOUT_MS },
+                    if (responseFormat === "diarized_json") {
+                        const parsed = await transcribeOpenAIDiarized({
+                            client: openai,
+                            model,
+                            audioBuffer,
+                            durationMs: recording.duration,
+                            filename: decryptedFilename,
+                            language: defaultLanguage,
+                            timeoutMs: env.WHISPER_REQUEST_TIMEOUT_MS,
+                        });
+                        transcriptionText = parsed.text;
+                        detectedLanguage = parsed.detectedLanguage;
+                    } else {
+                        // OpenAI's /v1/audio/transcriptions endpoint has a hard
+                        // 25 MiB per-request limit. For meeting-length recordings
+                        // that limit is the common case, not the edge case -- fall
+                        // back to a mono Opus re-encode so 3 h+ uploads don't get
+                        // rejected with a 413.
+                        const compressed = await maybeCompressForWhisper(
+                            audioBuffer,
+                            contentType,
                         );
-                    const parsed = parseTranscriptionResponse(
-                        transcription,
-                        responseFormat,
-                    );
-                    transcriptionText = parsed.text;
-                    detectedLanguage = parsed.detectedLanguage;
+                        const fileToSend = compressed.compressed
+                            ? buildAudioFile(
+                                  compressed.buffer,
+                                  recording.storagePath,
+                                  decryptedFilename,
+                              ).file
+                            : audioFile;
+
+                        // Whisper-1 runs ~0.1-0.3x realtime, so a 3 h recording
+                        // can keep the request open 20-40 min. The SDK default
+                        // (10 min) times out long before that; override
+                        // per-request so other OpenAI calls keep the default.
+                        const transcription =
+                            await openai.audio.transcriptions.create(
+                                buildTranscriptionParams({
+                                    file: fileToSend,
+                                    model,
+                                    responseFormat,
+                                    language: defaultLanguage,
+                                }),
+                                { timeout: env.WHISPER_REQUEST_TIMEOUT_MS },
+                            );
+                        const parsed = parseTranscriptionResponse(
+                            transcription,
+                            responseFormat,
+                        );
+                        transcriptionText = parsed.text;
+                        detectedLanguage = parsed.detectedLanguage;
+                    }
                 }
             }
         } else {

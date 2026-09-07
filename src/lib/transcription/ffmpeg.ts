@@ -84,12 +84,44 @@ export function ffmpegToOpus(
 
 /** Mono 16 kHz MP3 for chat-style providers that reject Ogg/Opus. */
 export function transcodeToMp3(input: Buffer): Promise<Buffer> {
+    return runFfmpeg(input, mp3Args());
+}
+
+/** Extract a time range and encode it as mono 16 kHz MP3. */
+export function transcodeSegmentToMp3(
+    input: Buffer,
+    startSeconds: number,
+    durationSeconds: number,
+): Promise<Buffer> {
     return runFfmpeg(input, [
         "-hide_banner",
         "-loglevel",
         "error",
         "-i",
         "pipe:0",
+        "-ss",
+        startSeconds.toFixed(3),
+        "-t",
+        durationSeconds.toFixed(3),
+        ...mp3OutputArgs(),
+    ]);
+}
+
+function mp3Args(): string[] {
+    return [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        ...mp3OutputArgs(),
+    ];
+}
+
+function mp3OutputArgs(): string[] {
+    return [
+        "-map",
+        "0:a:0",
         "-vn",
         "-map_metadata",
         "-1",
@@ -104,5 +136,5 @@ export function transcodeToMp3(input: Buffer): Promise<Buffer> {
         "-f",
         "mp3",
         "pipe:1",
-    ]);
+    ];
 }

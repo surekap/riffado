@@ -83,14 +83,57 @@ function buildMp3File(
 
 function formatDiarizedResponses(responses: TranscriptionDiarized[]): string {
     const multipleParts = responses.length > 1;
-    return responses
-        .flatMap((response, index) =>
-            (response.segments ?? []).map((segment) => {
-                const speaker = multipleParts
-                    ? `part_${index + 1}_${segment.speaker}`
-                    : segment.speaker;
-                return `${speaker}: ${segment.text}`;
-            }),
-        )
-        .join("\n");
+    const formattedTurns: string[] = [];
+    let timeOffsetSeconds = 0;
+
+    for (const [partIndex, response] of responses.entries()) {
+        const speakerNumbers = new Map<string, number>();
+        const turns: Array<{
+            speaker: string;
+            start: number;
+            text: string;
+        }> = [];
+
+        for (const segment of response.segments ?? []) {
+            const previous = turns.at(-1);
+            if (previous?.speaker === segment.speaker) {
+                previous.text = `${previous.text} ${segment.text.trim()}`;
+            } else {
+                turns.push({
+                    speaker: segment.speaker,
+                    start: segment.start,
+                    text: segment.text.trim(),
+                });
+            }
+        }
+
+        for (const turn of turns) {
+            let speakerNumber = speakerNumbers.get(turn.speaker);
+            if (speakerNumber === undefined) {
+                speakerNumber = speakerNumbers.size + 1;
+                speakerNumbers.set(turn.speaker, speakerNumber);
+            }
+            const partLabel = multipleParts ? ` · Part ${partIndex + 1}` : "";
+            formattedTurns.push(
+                `[${formatTimestamp(timeOffsetSeconds + turn.start)}] Speaker ${speakerNumber}${partLabel}\n${turn.text}`,
+            );
+        }
+
+        timeOffsetSeconds += response.duration;
+    }
+
+    return formattedTurns.join("\n\n");
+}
+
+function formatTimestamp(seconds: number): string {
+    const wholeSeconds = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(wholeSeconds / 3600);
+    const minutes = Math.floor((wholeSeconds % 3600) / 60);
+    const remainingSeconds = wholeSeconds % 60;
+    const minuteText = String(minutes).padStart(2, "0");
+    const secondText = String(remainingSeconds).padStart(2, "0");
+
+    return hours > 0
+        ? `${String(hours).padStart(2, "0")}:${minuteText}:${secondText}`
+        : `${minuteText}:${secondText}`;
 }

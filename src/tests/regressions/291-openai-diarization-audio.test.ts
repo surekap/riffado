@@ -39,7 +39,12 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
 
     it("normalizes a short recording to MP3 before transcription", async () => {
         create.mockResolvedValue({
-            segments: [{ speaker: "speaker_0", text: "Hello" }],
+            duration: 60,
+            segments: [
+                { speaker: "A", start: 2.4, text: "Hello" },
+                { speaker: "A", start: 4.8, text: "again" },
+                { speaker: "B", start: 8.1, text: "Hi there" },
+            ],
         });
 
         const result = await transcribeOpenAIDiarized({
@@ -61,16 +66,20 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
         });
         expect(params.response_format).toBe("diarized_json");
         expect(params.chunking_strategy).toBe("auto");
-        expect(result.text).toBe("speaker_0: Hello");
+        expect(result.text).toBe(
+            "[00:02] Speaker 1\nHello again\n\n[00:08] Speaker 2\nHi there",
+        );
     });
 
     it("splits a 1,483 second recording into balanced sub-limit chunks", async () => {
         create
             .mockResolvedValueOnce({
-                segments: [{ speaker: "speaker_0", text: "First" }],
+                duration: 741.96,
+                segments: [{ speaker: "A", start: 0, text: "First" }],
             })
             .mockResolvedValueOnce({
-                segments: [{ speaker: "speaker_0", text: "Second" }],
+                duration: 741.96,
+                segments: [{ speaker: "A", start: 8.04, text: "Second" }],
             });
 
         const result = await transcribeOpenAIDiarized({
@@ -97,7 +106,7 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
         );
         expect(create.mock.calls[0]?.[0].language).toBe("en");
         expect(result.text).toBe(
-            "part_1_speaker_0: First\npart_2_speaker_0: Second",
+            "[00:00] Speaker 1 · Part 1\nFirst\n\n[12:30] Speaker 1 · Part 2\nSecond",
         );
     });
 
@@ -108,7 +117,7 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
             Buffer.from("chunk-3"),
             Buffer.from("chunk-4"),
         ]);
-        create.mockResolvedValue({ segments: [] });
+        create.mockResolvedValue({ duration: 900.75, segments: [] });
 
         await transcribeOpenAIDiarized({
             client,

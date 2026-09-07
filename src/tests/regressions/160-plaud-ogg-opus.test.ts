@@ -86,7 +86,11 @@ import { createUserStorageProvider } from "@/lib/storage/factory";
 import { syncRecordingsForUser } from "@/lib/sync/sync-recordings";
 import { buildAudioFile } from "@/lib/transcription/audio-file";
 import { chatTranscribe } from "@/lib/transcription/chat-transcribe";
-import { ffmpegToOpus, transcodeToMp3 } from "@/lib/transcription/ffmpeg";
+import {
+    ffmpegToOpus,
+    transcodeToMp3,
+    transcodeToMp3Segments,
+} from "@/lib/transcription/ffmpeg";
 
 const FIXTURE = path.join(__dirname, "..", "fixtures", "sample.mp3");
 
@@ -402,6 +406,21 @@ describe("issue #160 — Plaud .mp3 that is actually Ogg/Opus", () => {
             const mp3 = await transcodeToMp3(ogg);
             expect(sniffAudio(mp3).container).toBe("mp3");
             expect(mp3.length).toBeGreaterThan(0);
+        },
+        15_000,
+    );
+
+    itIfFfmpeg(
+        "transcodeToMp3Segments writes multiple MPEG streams in one pass",
+        async () => {
+            const fixture = await readFile(FIXTURE);
+            const segments = await transcodeToMp3Segments(fixture, 0.4);
+
+            expect(segments.length).toBeGreaterThan(1);
+            for (const segment of segments) {
+                expect(sniffAudio(segment).container).toBe("mp3");
+                expect(segment.length).toBeGreaterThan(0);
+            }
         },
         15_000,
     );

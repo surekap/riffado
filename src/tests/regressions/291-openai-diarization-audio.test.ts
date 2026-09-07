@@ -9,14 +9,14 @@
 import type { OpenAI } from "openai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { transcodeSegmentToMp3, transcodeToMp3 } = vi.hoisted(() => ({
-    transcodeSegmentToMp3: vi.fn(),
+const { transcodeToMp3, transcodeToMp3Segments } = vi.hoisted(() => ({
     transcodeToMp3: vi.fn(),
+    transcodeToMp3Segments: vi.fn(),
 }));
 
 vi.mock("@/lib/transcription/ffmpeg", () => ({
-    transcodeSegmentToMp3,
     transcodeToMp3,
+    transcodeToMp3Segments,
 }));
 
 import { transcribeOpenAIDiarized } from "@/lib/transcription/openai-diarized-transcribe";
@@ -31,10 +31,10 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         transcodeToMp3.mockResolvedValue(Buffer.from("normalized-mp3"));
-        transcodeSegmentToMp3.mockImplementation(
-            async (_input: Buffer, startSeconds: number) =>
-                Buffer.from(`chunk-${startSeconds}`),
-        );
+        transcodeToMp3Segments.mockResolvedValue([
+            Buffer.from("chunk-1"),
+            Buffer.from("chunk-2"),
+        ]);
     });
 
     it("normalizes a short recording to MP3 before transcription", async () => {
@@ -52,7 +52,7 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
         });
 
         expect(transcodeToMp3).toHaveBeenCalledWith(audioBuffer);
-        expect(transcodeSegmentToMp3).not.toHaveBeenCalled();
+        expect(transcodeToMp3Segments).not.toHaveBeenCalled();
         expect(create).toHaveBeenCalledTimes(1);
         const params = create.mock.calls[0]?.[0];
         expect(params.file).toMatchObject({
@@ -83,16 +83,9 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
             timeoutMs: 10_000,
         });
 
-        expect(transcodeSegmentToMp3).toHaveBeenNthCalledWith(
-            1,
+        expect(transcodeToMp3Segments).toHaveBeenCalledOnce();
+        expect(transcodeToMp3Segments).toHaveBeenCalledWith(
             audioBuffer,
-            0,
-            741.96,
-        );
-        expect(transcodeSegmentToMp3).toHaveBeenNthCalledWith(
-            2,
-            audioBuffer,
-            741.96,
             741.96,
         );
         expect(create).toHaveBeenCalledTimes(2);
@@ -109,6 +102,12 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
     });
 
     it("keeps every generated chunk at or below 20 minutes", async () => {
+        transcodeToMp3Segments.mockResolvedValue([
+            Buffer.from("chunk-1"),
+            Buffer.from("chunk-2"),
+            Buffer.from("chunk-3"),
+            Buffer.from("chunk-4"),
+        ]);
         create.mockResolvedValue({ segments: [] });
 
         await transcribeOpenAIDiarized({
@@ -120,10 +119,10 @@ describe("issue #291 — OpenAI diarization audio preparation", () => {
             timeoutMs: 10_000,
         });
 
-        expect(transcodeSegmentToMp3).toHaveBeenCalledTimes(4);
-        const durations = transcodeSegmentToMp3.mock.calls.map(
-            (call) => call[2] as number,
+        expect(transcodeToMp3Segments).toHaveBeenCalledOnce();
+        expect(transcodeToMp3Segments.mock.calls[0]?.[1]).toBeLessThanOrEqual(
+            20 * 60,
         );
-        expect(durations.every((duration) => duration <= 20 * 60)).toBe(true);
+        expect(create).toHaveBeenCalledTimes(4);
     });
 });

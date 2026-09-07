@@ -1,8 +1,8 @@
 import type { OpenAI } from "openai";
 import type { TranscriptionDiarized } from "openai/resources/audio/transcriptions";
 import {
-    transcodeSegmentToMp3,
     transcodeToMp3,
+    transcodeToMp3Segments,
 } from "@/lib/transcription/ffmpeg";
 import { buildTranscriptionParams } from "@/lib/transcription/format";
 
@@ -39,18 +39,14 @@ export async function transcribeOpenAIDiarized(
         Math.ceil(durationSeconds / MAX_CHUNK_SECONDS),
     );
     const chunkDuration = durationSeconds / chunkCount;
+    const mp3Chunks =
+        chunkCount === 1
+            ? [await transcodeToMp3(audioBuffer)]
+            : await transcodeToMp3Segments(audioBuffer, chunkDuration);
     const responses: TranscriptionDiarized[] = [];
 
-    for (let index = 0; index < chunkCount; index += 1) {
-        const mp3 =
-            chunkCount === 1
-                ? await transcodeToMp3(audioBuffer)
-                : await transcodeSegmentToMp3(
-                      audioBuffer,
-                      index * chunkDuration,
-                      chunkDuration,
-                  );
-        const file = buildMp3File(mp3, filename, index, chunkCount);
+    for (const [index, mp3] of mp3Chunks.entries()) {
+        const file = buildMp3File(mp3, filename, index, mp3Chunks.length);
         const response = await client.audio.transcriptions.create(
             buildTranscriptionParams({
                 file,

@@ -165,10 +165,10 @@ vi.mock("@/lib/plaud/client-factory", () => ({
 }));
 
 vi.mock("@/lib/transcription/ffmpeg", () => ({
-    transcodeSegmentToMp3: vi
-        .fn()
-        .mockResolvedValue(Buffer.from("fake-mp3-chunk")),
     transcodeToMp3: vi.fn().mockResolvedValue(Buffer.from("fake-mp3-bytes")),
+    transcodeToMp3Segments: vi
+        .fn()
+        .mockResolvedValue([Buffer.from("fake-mp3-chunk")]),
 }));
 
 import { OpenAI } from "openai";
